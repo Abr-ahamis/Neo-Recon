@@ -1,0 +1,15 @@
+[scan]
+root = "scr/scans"
+max_workers = 8
+command_timeout = 900
+retries = 0
+
+[limits]
+max_depth = 12
+max_tasks = 5000
+max_files = 10000
+max_directories = 2000
+max_download_size = 10485760
+
+[dependencies]
+install_missing = false

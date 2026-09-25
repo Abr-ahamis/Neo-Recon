@@ -1,0 +1,1 @@
+"""Discovery test package placeholder."""

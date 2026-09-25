@@ -1,0 +1,1 @@
+"""Structured parser coordination placeholder."""

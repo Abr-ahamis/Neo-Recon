@@ -1,0 +1,1 @@
+"""Deterministic rule evaluation placeholder."""
