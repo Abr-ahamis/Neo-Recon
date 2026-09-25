@@ -4,11 +4,13 @@ import shlex
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from scr.core.context import TargetContext
 from scr.core.resources import Access, TraversalLimits
 from scr.core.tasks import TaskState
 from scr.modules.smb.module import SMBModule
+from scr.modules.smb.commands import map_host
 from scr.modules.smb.parser import access_result, classify_file, parse_listing, parse_shares
 
 
@@ -42,6 +44,14 @@ IPC$            IPC       IPC Service
 
 
 class SMBAdaptiveTests(unittest.TestCase):
+    def test_smbmap_command_is_read_only_and_uses_requested_target_port(self) -> None:
+        actual, display = map_host("192.0.2.15", 1445)
+        self.assertEqual(actual[1:], display)
+        self.assertEqual(display[:5], ["smbmap", "-H", "192.0.2.15", "-P", "1445"])
+        self.assertIn("--no-write-check", actual)
+        self.assertNotIn("--upload", actual)
+        self.assertNotIn("--delete", actual)
+
     def test_anonymous_share_recursively_lists_and_inspects_bounded_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -85,7 +95,9 @@ class SMBAdaptiveTests(unittest.TestCase):
             module = SMBModule(context, limits=TraversalLimits(max_depth=6, max_files=20,
                                     max_directories=20, max_tasks=100, max_download_size=1024),
                                execute=fake_execute)
-            resources = module.run()
+            with patch("scr.modules.smb.module.shutil.which", return_value="/usr/bin/smbmap"):
+                resources = module.run()
+            self.assertTrue(any(argv[0] == "smbmap" for argv in executed))
             paths = {item["path"] for item in resources}
             self.assertTrue({"public", "documents", "documents/archive",
                              "config.xml", "documents/credentials.txt",

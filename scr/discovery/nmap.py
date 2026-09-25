@@ -41,6 +41,19 @@ def command(target: str, tcp_ports: list[int], udp_ports: list[int] | None = Non
     return argv + ["-p", ",".join(specs), "-oN", "-", target]
 
 
+def port_discovery_command(target: str, port_spec: str | None = None) -> list[str]:
+    """Use Nmap as the read-only port-discovery fallback when RustScan is unavailable."""
+    argv = ["nmap", "-Pn", "-n", "--open", "-sT", "-T4"]
+    argv.extend(("-p", port_spec) if port_spec else ("-p-",))
+    argv.extend(("-oN", "-"))
+    try:
+        if ipaddress.ip_address(target).version == 6:
+            argv.insert(1, "-6")
+    except ValueError:
+        pass
+    return argv + [target]
+
+
 def make_task(context: TargetContext) -> Task:
     return Task("nmap", context.target, "nmap",
                 command(context.target, context.tcp_ports, context.udp_ports),

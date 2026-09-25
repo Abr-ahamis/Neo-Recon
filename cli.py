@@ -29,6 +29,10 @@ def get_context(argv: list[str] | None = None) -> TargetContext:
         target = input("Target: ").strip()
     target = validate_target(target)
     settings = load_settings()
-    evidence = EvidenceStore.create(args.output_root or settings.scan_root, target)
+    output_root = (args.output_root or settings.scan_root).expanduser().resolve()
+    temporary_root = Path("/tmp").resolve()
+    if not output_root.is_relative_to(temporary_root):
+        raise ValueError("scan output must be stored under /tmp")
+    evidence = EvidenceStore.create(output_root, target)
     return TargetContext(target=target, scan_dir=evidence.root,
                          facts={"port_spec": args.ports} if args.ports else {})

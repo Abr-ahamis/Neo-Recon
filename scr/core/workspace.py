@@ -18,7 +18,7 @@ class WorkspaceManager:
     _placement_lock = threading.RLock()
     _global_reservations: dict[int, int] = defaultdict(int)
 
-    def __init__(self, *, limit: int = 5,
+    def __init__(self, *, limit: int = 4,
                  run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
                  executable: str = "hyprctl", enabled: bool | None = None,
                  env: dict[str, str] | None = None) -> None:

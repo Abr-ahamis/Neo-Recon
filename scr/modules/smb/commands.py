@@ -17,6 +17,13 @@ def list_shares(target: str, port: int, auth_file: Path | None = None) -> tuple[
     return _wrap(["smbclient", "-p", str(port), *auth, "-L", f"//{target}"])
 
 
+def map_host(target: str, port: int) -> tuple[list[str], list[str]]:
+    """Read-only anonymous SMBMap listing; deliberately skips write checks."""
+    native = ["smbmap", "-H", target, "-P", str(port), "--no-banner",
+              "--no-color", "--no-update", "--no-write-check", "-r", "--depth", "1", "-q"]
+    return _wrap(native)
+
+
 def list_directory(target: str, port: int, share: str, path: str = "",
                    auth_file: Path | None = None) -> tuple[list[str], list[str]]:
     auth = ["-A", str(auth_file)] if auth_file else ["-N"]

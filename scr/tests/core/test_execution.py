@@ -19,6 +19,7 @@ from scr.core.process import CommandRunner
 from scr.core.pty import run_pty
 from scr.core.tasks import Task, TaskState
 from scr.core.terminal import TerminalManager
+from scr.core.suggestions import next_commands
 
 
 class ContextTests(unittest.TestCase):
@@ -38,6 +39,37 @@ class ContextTests(unittest.TestCase):
 
 
 class ExecutionTests(unittest.TestCase):
+    def test_contextual_next_commands_provide_five_smb_followups(self) -> None:
+        commands = next_commands("smb", "192.0.2.15",
+                                 ["smbclient", "-p", "1445", "//192.0.2.15/support-tools"],
+                                 b"Sharename support-tools")
+        self.assertEqual(len(commands), 5)
+        self.assertIn("1445", commands[0])
+        self.assertTrue(any(command.startswith("smbmap ") for command in commands))
+        self.assertTrue(any(command.startswith("rpcclient ") for command in commands))
+
+    def test_command_runner_prints_five_suggestions_after_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            task = Task("suggest", "192.0.2.15", "smb",
+                        [sys.executable, "-c", "print('done')"],
+                        root / "result.raw", root / "result.json", timeout=3,
+                        display_argv=["smbclient", "-p", "1445", "//192.0.2.15/share"])
+            read_fd, write_fd = os.pipe()
+            try:
+                result = CommandRunner(stream_fd=write_fd).run(task)
+                os.close(write_fd)
+                write_fd = -1
+                rendered = os.read(read_fd, 8192).decode()
+            finally:
+                os.close(read_fd)
+                if write_fd >= 0:
+                    os.close(write_fd)
+            self.assertEqual(result.exit_code, 0)
+            self.assertIn("Next 5 Commands", rendered)
+            self.assertEqual(sum(1 for line in rendered.splitlines()
+                                 if line[:1].isdigit() and ". " in line), 5)
+
     def test_live_pty_bytes_equal_saved_bytes_and_arrive_incrementally(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

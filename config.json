@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "install_missing": true,
+    "rustscan_download_url": "https://github.com/bee-san/RustScan/releases/download/2.4.1/rustscan.deb.zip"
+  }
+}

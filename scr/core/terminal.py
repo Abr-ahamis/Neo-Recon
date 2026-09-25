@@ -19,6 +19,7 @@ from scr.core.desktop import desktop_session_env
 from scr.core.process import CommandRunner
 from scr.core.tasks import Task, TaskState
 from scr.core.workspace import WorkspaceManager
+from config import load_settings
 
 
 class TerminalManager:
@@ -32,7 +33,8 @@ class TerminalManager:
         self.gui = bool(self.desktop_env.get("DISPLAY") or self.desktop_env.get("WAYLAND_DISPLAY"))
         self.inline_service = os.environ.get("NEO_RECON_SERVICE_WORKER") == "1"
         self.last_external = False
-        self.workspaces = workspace_manager or WorkspaceManager(env=self.desktop_env)
+        self.workspaces = workspace_manager or WorkspaceManager(
+            limit=load_settings().workspace_window_limit, env=self.desktop_env)
 
     def command(self, title: str, argv: list[str]) -> list[str] | None:
         title = title if title.startswith("Neo-Recon:") else f"Neo-Recon:{title}"

@@ -35,9 +35,20 @@ class HTTPParserTests(unittest.TestCase):
             source.write_text("admin\\n#comment\\nlogin\\nadmin\\n".replace("\\n", "\n"))
             with patch("scr.modules.http.wordlists.SEARCH_ROOTS", (root,)):
                 self.assertEqual(find_wordlist("web", Path("fallback.txt")), source)
+                self.assertEqual(find_wordlist("vhost", Path("fallback.txt")), source)
             copied = root / "scan/wordlist.txt"
             self.assertEqual(bounded_copy(source, copied, limit=2), 2)
             self.assertEqual(copied.read_text(), "admin\nlogin\n")
+
+    def test_wordlist_search_finds_common_txt_anywhere_under_wordlists(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "nested" / "Discovery" / "Web-Content" / "common.txt"
+            source.parent.mkdir(parents=True)
+            source.write_text("admin\n")
+            with patch("scr.modules.http.wordlists.SEARCH_ROOTS", (root,)):
+                self.assertEqual(find_wordlist("web", Path("fallback.txt")), source)
+                self.assertEqual(find_wordlist("vhost", Path("fallback.txt")), source)
 
     def test_ffuf_command_and_result_parser(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -102,7 +113,7 @@ class HTTPParserTests(unittest.TestCase):
 
 
 class HTTPAdaptiveTests(unittest.TestCase):
-    def test_baseline_filters_soft_404_and_links_pivot_recursively(self) -> None:
+    def test_one_base_request_collects_context_without_repeated_curls(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             context = TargetContext("127.0.0.1", Path(directory))
             seen: list[str] = []
@@ -110,15 +121,8 @@ class HTTPAdaptiveTests(unittest.TestCase):
             def execute(task):
                 url = task.resource_id
                 seen.append(url)
-                responses = {
-                    "/": (200, b"<a href='/admin/'>admin</a><a href='/backup.zip'>backup</a>"),
-                    "/admin/": (200, b"<a href='config.php'>config</a>"),
-                    "/admin/config.php": (200, b"<?php config"),
-                    "/backup.zip": (200, b"PK\x03\x04payload"),
-                }
                 path = "/" + url.split("://", 1)[1].split("/", 1)[1]
-                path = path.split("?", 1)[0]
-                status, body = (404, b"uniform missing") if "not-found" in path else responses.get(path, (404, b"uniform missing"))
+                status, body = (200, b"<title>Lab</title><a href='/admin/'>admin</a><a href='/backup.zip'>backup</a>")
                 task.output_path.parent.mkdir(parents=True, exist_ok=True)
                 task.output_path.write_bytes(
                     f"HTTP/1.1 {status} Test\r\nContent-Type: text/html\r\nContent-Length: {len(body)}\r\n\r\n".encode() + body
@@ -129,12 +133,10 @@ class HTTPAdaptiveTests(unittest.TestCase):
             module = HTTPModule(context, port=8080, execute=execute,
                                 limits=TraversalLimits(max_workers=3, max_depth=5))
             resources = module.run()
-            paths = {item["path"] for item in resources}
-            self.assertTrue(any(path.endswith("/admin/") for path in paths))
-            self.assertTrue(any(path.endswith("/admin/config.php") for path in paths))
-            self.assertTrue(any(path.endswith("/backup.zip") for path in paths))
-            self.assertTrue(any("/admin/config.php" in url for url in seen))
-            self.assertEqual(sum("not-found" in url for url in seen), 1)
+            self.assertEqual(seen, ["http://127.0.0.1:8080/"])
+            self.assertEqual(len(resources), 1)
+            self.assertEqual(resources[0]["metadata"]["title"], "Lab")
+            self.assertIn("127.0.0.1", context.hostnames)
 
     def test_auth_required_and_forbidden_results_are_not_readable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -205,9 +207,9 @@ class HTTPAdaptiveTests(unittest.TestCase):
                 state = json.loads(result_path.read_text())
                 self.assertEqual(state["state"], "SUCCESS")
                 raw = list((scan_dir / "services/http").glob("*.raw"))
-                self.assertGreaterEqual(len(raw), 3)
+                self.assertGreaterEqual(len(raw), 1)
                 self.assertTrue(any(b"local test" in item.read_bytes() for item in raw))
-                self.assertTrue(any(b"OPTIONS" in item.read_bytes() for item in raw))
+                self.assertFalse(any(b"OPTIONS" in item.read_bytes() for item in raw))
                 self.assertIn(b"Suggested commands (copy and run)", result.stdout)
         finally:
             server.shutdown()
@@ -247,7 +249,7 @@ class HTTPAdaptiveTests(unittest.TestCase):
                 wordlist_root = Path(directory) / "seclists"
                 custom_list = wordlist_root / "Discovery/Web-Content/common.txt"
                 custom_list.parent.mkdir(parents=True)
-                custom_list.write_text("fuzz-only/\n")
+                custom_list.write_text("admin/\nadmin/config.php\nfuzz-only/\n")
                 module = HTTPModule(context, port=server.server_address[1], runner=CommandRunner(stream_fd=None),
                                     terminals=InlineTerminal(),
                                     limits=TraversalLimits(max_depth=4, max_workers=3))
@@ -264,7 +266,7 @@ class HTTPAdaptiveTests(unittest.TestCase):
                 self.assertTrue(any(path.endswith("/admin/config.php") for path in paths), paths)
                 self.assertTrue(any(path.endswith("/fuzz-only/") for path in paths), paths)
                 raw_logs = list((Path(directory) / "services/http").glob("*.raw"))
-                self.assertGreaterEqual(len(raw_logs), 3)
+                self.assertGreaterEqual(len(raw_logs), 2)
                 self.assertTrue(any(b"HTTP/1.0 200" in log.read_bytes() for log in raw_logs))
                 fuzz_logs = list((Path(directory) / "services/http").glob("ffuf-*.raw"))
                 self.assertTrue(fuzz_logs, "HTTP module did not launch ffuf")

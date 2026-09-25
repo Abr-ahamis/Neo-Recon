@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import tempfile
 from pathlib import Path
 import re
@@ -147,6 +148,10 @@ class SMBModule:
     def run(self) -> list[dict[str, Any]]:
         auth_file = self._credential_file()
         try:
+            if shutil.which("smbmap"):
+                map_task = self._make_task("smb-map", commands.map_host(
+                    self.context.target, self.port), "smbmap")
+                self.execute_task(map_task)
             task = self._make_task("smb-shares", commands.list_shares(
                 self.context.target, self.port, auth_file), "shares")
             state = self.execute_task(task)

@@ -21,6 +21,17 @@ class CLITests(unittest.TestCase):
             self.assertTrue(context.scan_dir.is_relative_to(root))
             self.assertTrue((context.scan_dir / "metadata/scan.json").is_file())
 
+    def test_default_scan_evidence_is_stored_under_tmp(self) -> None:
+        with patch("cli.load_settings") as load:
+            from config import Settings
+            load.return_value = Settings()
+            context = get_context(["10.129.22.26"])
+        self.assertTrue(context.scan_dir.is_relative_to(Path("/tmp")))
+
+    def test_rejects_output_root_outside_tmp(self) -> None:
+        with self.assertRaisesRegex(ValueError, "under /tmp"):
+            get_context(["--output-root", "/var/tmp/neorecon-outside", "10.129.22.26"])
+
 
 if __name__ == "__main__":
     unittest.main()

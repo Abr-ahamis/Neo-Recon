@@ -12,6 +12,18 @@ from unittest.mock import patch
 
 
 class WorkspaceManagerTests(unittest.TestCase):
+    def test_terminal_adapter_prefers_foot(self) -> None:
+        with patch("scr.core.terminal.desktop_session_env",
+                   return_value={"DISPLAY": ":1"}), \
+             patch("scr.core.terminal.shutil.which",
+                   side_effect=lambda name: "/usr/bin/" + name
+                   if name in {"foot", "gnome-terminal"} else None):
+            from scr.core.terminal import TerminalManager
+            manager = TerminalManager(workspace_manager=WorkspaceManager(enabled=False, env={}))
+            command = manager.command("test", ["true"])
+        self.assertIsNotNone(command)
+        self.assertEqual(command[0], "foot")
+
     def test_elevated_process_recovers_callers_hyprland_environment(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             runtime_root = Path(directory)
@@ -26,7 +38,7 @@ class WorkspaceManagerTests(unittest.TestCase):
             self.assertEqual(env["WAYLAND_DISPLAY"], "wayland-2")
             self.assertEqual(env["HYPRLAND_INSTANCE_SIGNATURE"], "test-signature")
 
-    def test_worker_windows_distribute_in_groups_of_five(self) -> None:
+    def test_worker_windows_distribute_in_groups_of_four(self) -> None:
         current = 1
         clients: list[dict] = []
 
@@ -44,9 +56,10 @@ class WorkspaceManagerTests(unittest.TestCase):
             placed.append(workspace)
             clients.append({"title": f"Neo-Recon:worker-{index}", "workspace": {"id": workspace}})
             manager.release(workspace)
-        self.assertEqual(placed[:5], [1] * 5)
-        self.assertEqual(placed[5:10], [2] * 5)
-        self.assertEqual(placed[10:], [3] * 5)
+        self.assertEqual(placed[:4], [1] * 4)
+        self.assertEqual(placed[4:8], [2] * 4)
+        self.assertEqual(placed[8:12], [3] * 4)
+        self.assertEqual(placed[12:], [4] * 3)
 
     def test_independent_service_managers_share_pending_reservations(self) -> None:
         current = 1
@@ -64,7 +77,7 @@ class WorkspaceManagerTests(unittest.TestCase):
             clients.append({"title": f"Neo-Recon:parallel-{index}",
                             "workspace": {"id": workspace}})
             manager.release(workspace)
-        self.assertEqual(selected, [1, 1, 1, 1, 1, 2])
+        self.assertEqual(selected, [1, 1, 1, 1, 2, 2])
 
     def test_all_existing_app_windows_consume_the_five_window_limit(self) -> None:
         clients = [{"title": f"Browser {i}", "workspace": {"id": 1}}
@@ -82,7 +95,7 @@ class WorkspaceManagerTests(unittest.TestCase):
             clients.append({"title": f"Neo-Recon:worker-{index}",
                             "workspace": {"id": workspace}, "mapped": True})
             manager.release(workspace)
-        self.assertEqual(workspaces, [1, 2, 2])
+        self.assertEqual(workspaces, [2, 2, 2])
 
     def test_unmapped_and_hidden_windows_do_not_consume_visible_slots(self) -> None:
         clients = ([{"title": "hidden", "workspace": {"id": 1}, "hidden": True}]
@@ -96,7 +109,7 @@ class WorkspaceManagerTests(unittest.TestCase):
 
         manager = WorkspaceManager(run=fake_run, enabled=True)
         workspace = manager.reserve()
-        self.assertEqual(workspace, 1)
+        self.assertEqual(workspace, 2)
         manager.release(workspace)
 
 

@@ -13,11 +13,13 @@ from pathlib import Path
 from typing import Any
 
 from scr.core.evidence import write_json
+from scr.core.suggestions import next_commands
 from scr.core.pty import run_pty
 from scr.core.tasks import Task, TaskState
 
 
 PROCESS_CANCEL_EVENT = threading.Event()
+_SUGGESTION_LOCK = threading.Lock()
 
 
 def reset_process_cancellation() -> None:
@@ -75,6 +77,20 @@ class CommandRunner:
             error = str(exc)
         ended = now()
         self._metadata(task, started, ended, exit_code, error)
+        if self.stream_fd is not None:
+            try:
+                suggestions = next_commands(task.service, task.target,
+                                            task.display_argv or task.argv,
+                                            task.output_path.read_bytes()[:1_048_576])
+                with _SUGGESTION_LOCK:
+                    os.write(self.stream_fd,
+                             b"\n----------------------------------------\nNext 5 Commands\n"
+                             b"----------------------------------------\n")
+                    for index, command in enumerate(suggestions[:5], 1):
+                        os.write(self.stream_fd, f"{index}. {command}\n".encode())
+                    os.write(self.stream_fd, b"----------------------------------------\n")
+            except OSError:
+                pass
         return ProcessResult(exit_code, task.state, task.output_path, task.metadata_path)
 
     def cancel_all(self) -> None:

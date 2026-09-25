@@ -117,9 +117,13 @@ def run_services(context: TargetContext, *, max_workers: int | None = None,
                 write_json(task.metadata_path, {"task_id": task.id, "state": "SKIPPED",
                     "reason": "missing dependencies", "missing": dependency_result.missing})
                 return TaskState.SKIPPED
+            optional_tools = tuple(getattr(dependency_spec, "OPTIONAL_EXECUTABLES", ()))
+            optional_result = dependency_manager.ensure(optional_tools) if optional_tools else None
             write_json(context.scan_dir / "metadata" / f"service-tools-{task.id}.json",
                        {"task_id": task.id, "selected": dict(getattr(dependency_result, "selected", ())),
-                        "installed": getattr(dependency_result, "installed", ())})
+                        "installed": getattr(dependency_result, "installed", ()),
+                        "optional_available": getattr(optional_result, "available", ()),
+                        "optional_missing": getattr(optional_result, "missing", ())})
             if external_worker:
                 state = terminal_manager.execute(task)
             else:

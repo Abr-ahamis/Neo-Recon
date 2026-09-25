@@ -6,7 +6,7 @@ from scr.core.context import TargetContext
 from scr.core.output import collect
 from scr.core.process import CommandRunner
 from scr.core.terminal import TerminalManager
-from scr.core.tasks import TaskState
+from scr.core.tasks import Task, TaskState
 from scr.core.evidence import write_json
 from scr.core.hosts import HostsManager
 from scr.discovery import classifier, nmap, rustscan
@@ -23,14 +23,31 @@ def discover(context: TargetContext, *, port_spec: str | None = None,
     dependencies = DependencyManager(install_missing=load_settings().install_missing_dependencies)
     available = dependencies.ensure(("rustscan",))
     if available.missing:
-        raise RuntimeError("Missing required executable(s): " + ", ".join(available.missing))
-    rust_task = rustscan.make_task(context, port_spec)
-    state = terminals.execute(rust_task, runner)
-    if state != TaskState.SUCCESS:
-        raise RuntimeError(f"RustScan task ended in {state.value}")
-    if rust_task.terminal_external:
-        collect(rust_task.service, rust_task.argv, rust_task.output_path)
-    ports = rustscan.extract_ports(rust_task.output_path.read_bytes())
+        fallback = dependencies.ensure(("nmap",))
+        if fallback.missing:
+            raise RuntimeError("Missing required executable(s): " + ", ".join(fallback.missing))
+        discovery_task = Task(
+            "nmap-port-discovery", context.target, "nmap-discovery",
+            nmap.port_discovery_command(context.target, port_spec),
+            context.scan_dir / "discovery/nmap-ports.log",
+            context.scan_dir / "metadata/nmap-port-discovery.json", timeout=1800,
+            reason="Nmap fallback port discovery", display_argv=nmap.port_discovery_command(
+                context.target, port_spec))
+        state = terminals.execute(discovery_task, runner)
+        if state != TaskState.SUCCESS:
+            raise RuntimeError(f"Nmap fallback discovery ended in {state.value}")
+        if discovery_task.terminal_external:
+            collect(discovery_task.service, discovery_task.display_argv or discovery_task.argv,
+                    discovery_task.output_path)
+        ports = rustscan.extract_ports(discovery_task.output_path.read_bytes())
+    else:
+        rust_task = rustscan.make_task(context, port_spec)
+        state = terminals.execute(rust_task, runner)
+        if state != TaskState.SUCCESS:
+            raise RuntimeError(f"RustScan task ended in {state.value}")
+        if rust_task.terminal_external:
+            collect(rust_task.service, rust_task.argv, rust_task.output_path)
+        ports = rustscan.extract_ports(rust_task.output_path.read_bytes())
     context.tcp_ports = ports["tcp"]
     context.udp_ports = ports["udp"]
     write_json(context.scan_dir / "metadata/ports.json", ports)

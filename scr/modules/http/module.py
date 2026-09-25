@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import secrets
 import shutil
 from pathlib import Path
 from collections.abc import Callable
@@ -16,9 +15,11 @@ from scr.core.process import CommandRunner
 from scr.core.resources import Access, Resource, ResourceStatus, TraversalLimits
 from scr.core.tasks import Task, TaskState
 from scr.core.terminal import TerminalManager
+from scr.dependencies.manager import DependencyManager
 from scr.engine.traversal import ResourceTraversal
 from scr.modules.http import commands, parser, rules
 from scr.modules.http.wordlists import bounded_copy, find_wordlist
+from config import load_settings
 
 
 class HTTPModule:
@@ -41,6 +42,14 @@ class HTTPModule:
         self.traversal = ResourceTraversal(self.limits)
         self.baseline: parser.Response | None = None
         self._fuzzed: set[str] = set()
+
+    @staticmethod
+    def _ensure_ffuf() -> bool:
+        if not shutil.which("ffuf"):
+            DependencyManager(
+                install_missing=load_settings().install_missing_dependencies
+            ).ensure(("ffuf",))
+        return shutil.which("ffuf") is not None
 
     def _task(self, url: str, label: str, headers: tuple[str, ...] = (),
               method: str | None = None) -> Task:
@@ -116,7 +125,7 @@ class HTTPModule:
         return resource.resource_type == "directory" or urlsplit(resource.path).path.endswith("/")
 
     def _fuzz_directory(self, resource: Resource) -> list[Resource]:
-        if (not shutil.which("ffuf") or resource.resource_id in self._fuzzed
+        if (not self._ensure_ffuf() or resource.resource_id in self._fuzzed
                 or len(self._fuzzed) >= 8):
             return []
         self._fuzzed.add(resource.resource_id)
@@ -176,25 +185,33 @@ class HTTPModule:
                 self.context.add_hostname(host)
 
     def run(self) -> list[dict[str, object]]:
-        scheme, host, _ = self._origin(self.base_url)
-        # Use the same origin and an unpredictable path as a soft-404 signature.
-        random_url = urlunsplit((scheme, self.authority,
-                                 f"/{secrets.token_hex(12)}-not-found/", "", ""))
-        _, self.baseline = self._request(random_url, "baseline")
+        # One base-page request provides the HTTP context. Discovery uses ffuf,
+        # so the report is not filled with one curl transcript per candidate.
+        _, self.baseline = self._request(self.base_url, "base")
         if self.baseline.status is None:
             return []
-        self._request(self.base_url, "options", method="OPTIONS")
         root = Resource("http", self.context.target, self.port, "tcp", "endpoint",
                         self.base_url, path=self.base_url,
                         metadata={"url": self.base_url, "source": "root"})
-        # Root response contributes discovered links. Seed paths are candidates;
-        # the baseline signature removes uniform soft-404 responses.
-        seeds = [Resource("http", self.context.target, self.port, "tcp",
-                          rules.candidate_type(path),
-                          path, path=urlunsplit((scheme, f"{host}:{self.port}", "/" + path, "", "")),
-                          metadata={"source": "small-wordlist"}) for path in rules.initial_paths()]
-        self.traversal.traverse([root, *seeds], self._enumerate)
-        values = [item.to_dict() for item in self.traversal.resources.values()]
+        response = self.baseline
+        root.metadata.update({"status_code": response.status,
+                              "content_type": response.headers.get("content-type"),
+                              "content_length": len(response.body),
+                              "redirect": response.headers.get("location"),
+                              "server": response.headers.get("server"),
+                              "title": parser.page_title(response.body),
+                              "allow": response.headers.get("allow"),
+                              "dav": response.headers.get("dav")})
+        root.authentication_required = response.status in {401, 407}
+        root.read_access = Access.YES if response.status and 200 <= response.status < 400 else Access.NO
+        if response.status in {401, 403, 407}:
+            root.list_access = Access.NO
+            root.metadata["permission_state"] = "AUTH_REQUIRED" if response.status in {401, 407} else "NO_ACCESS"
+        self._record_links(response)
+        resources = [root]
+        if response.status not in {401, 403, 407} and self.execute_task is None:
+            resources.extend(self._fuzz_directory(root))
+        values = [item.to_dict() for item in resources]
         self.context.resources.update({item["resource_id"]: item for item in values})
         write_json(self.context.scan_dir / "metadata/http-resources.json", values)
         domain = self.context.facts.get("domain") or next(iter(sorted(self.context.domains)), None)
@@ -203,7 +220,7 @@ class HTTPModule:
         return values
 
     def _enumerate_vhosts(self, domain: str) -> None:
-        fallback = Path(__file__).resolve().parents[2] / "wordlists/web/vhosts.txt"
+        fallback = Path(__file__).resolve().parents[2] / "wordlists/common.txt"
         source = find_wordlist("vhost", fallback)
         wordlist = self.context.scan_dir / "metadata/http-vhosts-active.txt"
         try:
@@ -213,7 +230,7 @@ class HTTPModule:
         except OSError:
             return
         findings = []
-        if shutil.which("ffuf"):
+        if self._ensure_ffuf():
             key = hashlib.sha256((self.base_url + domain).encode()).hexdigest()[:12]
             json_output = self.context.scan_dir / "metadata" / f"http-vhosts-{key}.json"
             argv, display = commands.fuzz(self.base_url, wordlist, json_output,
@@ -232,15 +249,11 @@ class HTTPModule:
                               for item in commands.parse_fuzz_results(json_output)
                               if isinstance(item.get("input"), dict)]
         else:
-            candidates = candidates[:30]
+            candidates = []
         for candidate in candidates:
             if not isinstance(candidate, str) or not candidate or "/" in candidate or " " in candidate:
                 continue
             hostname = f"{candidate}.{domain}"
-            state, response = self._request(self.base_url, "vhost",
-                                            (f"Host: {hostname}",))
-            if state == TaskState.SUCCESS and self.baseline is not None and rules.accepted(response, self.baseline):
-                self.context.add_hostname(hostname)
-                findings.append({"hostname": hostname, "status": response.status,
-                                 "content_length": len(response.body)})
+            self.context.add_hostname(hostname)
+            findings.append({"hostname": hostname, "source": "ffuf"})
         write_json(self.context.scan_dir / "metadata/http-vhosts.json", findings)

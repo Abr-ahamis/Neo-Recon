@@ -15,11 +15,51 @@ from scr.core.pty import run_pty
 from scr.core.process import CommandRunner
 from scr.core.terminal import TerminalManager
 from scr.discovery.classifier import classify_all
-from scr.discovery.nmap import command as nmap_command, parse_services
+from scr.discovery.nmap import command as nmap_command, parse_services, port_discovery_command
 from scr.discovery.rustscan import command as rustscan_command, extract_ports, make_task as rustscan_task
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_nmap_fallback_discovers_ports_when_rustscan_is_unavailable(self) -> None:
+        class Dependencies:
+            def ensure(self, executables):
+                from types import SimpleNamespace
+                return SimpleNamespace(missing=("rustscan",) if "rustscan" in executables else ())
+
+        class ImmediateTerminal:
+            def __init__(self):
+                self.commands = []
+
+            def execute(self, task, runner):
+                from scr.core.tasks import TaskState
+                self.commands.append(task.argv)
+                task.output_path.parent.mkdir(parents=True, exist_ok=True)
+                if task.service == "nmap-discovery":
+                    task.output_path.write_bytes(b"53/tcp open domain\n")
+                else:
+                    task.output_path.write_bytes(b"PORT STATE SERVICE\n53/tcp open domain\n")
+                task.state = TaskState.SUCCESS
+                return TaskState.SUCCESS
+
+        with tempfile.TemporaryDirectory() as directory:
+            from scr.discovery.pipeline import discover
+            from scr.core.tasks import TaskState
+            context = TargetContext("192.0.2.20", Path(directory))
+            terminals = ImmediateTerminal()
+            with patch("scr.discovery.pipeline.DependencyManager", return_value=Dependencies()):
+                services = discover(context, port_spec="53", terminals=terminals,
+                                    runner=CommandRunner(stream_fd=None))
+            self.assertEqual(context.tcp_ports, [53])
+            self.assertEqual(terminals.commands[0],
+                             port_discovery_command("192.0.2.20", "53"))
+            self.assertEqual(services[0]["module"], "dns")
+
+    def test_nmap_fallback_command_respects_scope_and_unprivileged_connect_scan(self) -> None:
+        self.assertEqual(port_discovery_command("192.0.2.20", "53,445"),
+                         ["nmap", "-Pn", "-n", "--open", "-sT", "-T4", "-p", "53,445",
+                          "-oN", "-", "192.0.2.20"])
+        self.assertIn("-p-", port_discovery_command("192.0.2.20"))
+
     def test_rustscan_nmap_http_fingerprint_reaches_http_service_stage(self) -> None:
         class InlineTerminal(TerminalManager):
             def launch(self, title, argv, env=None):

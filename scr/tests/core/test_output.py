@@ -22,8 +22,28 @@ import threading
 
 
 class OutputTests(unittest.TestCase):
+    def test_web_report_uses_two_hundred_line_limit(self) -> None:
+        raw = b"web line\n" * 201
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "web.raw"
+            output.write_bytes(raw)
+            read_fd, write_fd = os.pipe()
+            try:
+                collect("HTTP", ["curl", "http://example.test"], output, write_fd)
+                os.close(write_fd)
+                write_fd = -1
+                rendered = os.read(read_fd, 4096)
+            finally:
+                os.close(read_fd)
+                if write_fd >= 0:
+                    os.close(write_fd)
+            self.assertIn(b"Output exceeded 200 lines", rendered)
+            self.assertIn(str(output.resolve()).encode(), rendered)
+            self.assertNotIn(b"web line", rendered)
+            self.assertEqual(output.read_bytes(), raw)
+
     def test_large_raw_output_is_saved_but_omitted_from_main_report(self) -> None:
-        raw = (b"native line\n" * 301) + b"tail"
+        raw = (b"native line\n" * 251) + b"tail"
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "native.raw"
             output.write_bytes(raw)
@@ -37,13 +57,15 @@ class OutputTests(unittest.TestCase):
                 os.close(read_fd)
                 if write_fd >= 0:
                     os.close(write_fd)
-            self.assertEqual(rendered, b"")
+            self.assertIn(b"Output exceeded 250 lines", rendered)
+            self.assertIn(str(output.resolve()).encode(), rendered)
+            self.assertNotIn(b"native line", rendered)
             self.assertEqual(output.read_bytes(), raw)
 
     def test_output_at_main_report_limit_is_displayed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "native.raw"
-            raw = b"line\n" * 300
+            raw = b"line\n" * 250
             output.write_bytes(raw)
             read_fd, write_fd = os.pipe()
             try:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tomllib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class Settings:
-    scan_root: Path = Path("scr/scans")
+    scan_root: Path = Path("/tmp/neo-recon/scans")
     max_workers: int = 8
     command_timeout: float = 900.0
     retries: int = 0
@@ -20,6 +21,7 @@ class Settings:
     max_directories: int = 2000
     max_download_size: int = 10 * 1024 * 1024
     install_missing_dependencies: bool = False
+    workspace_window_limit: int = 4
 
 
 def load_settings(path: Path | None = None) -> Settings:
@@ -30,9 +32,15 @@ def load_settings(path: Path | None = None) -> Settings:
         raw: dict[str, Any] = tomllib.load(stream)
     scan = raw.get("scan", {})
     limits = raw.get("limits", {})
+    terminal = raw.get("terminal", {})
     dependencies = raw.get("dependencies", {})
+    json_config = Path(__file__).parent / "config.json"
+    if json_config.is_file():
+        with json_config.open(encoding="utf-8") as stream:
+            overrides = json.load(stream)
+        dependencies = {**dependencies, **overrides.get("dependencies", {})}
     return Settings(
-        scan_root=Path(scan.get("root", "scr/scans")),
+        scan_root=Path(scan.get("root", "/tmp/neo-recon/scans")),
         max_workers=int(scan.get("max_workers", 8)),
         command_timeout=float(scan.get("command_timeout", 900)),
         retries=int(scan.get("retries", 0)),
@@ -42,4 +50,5 @@ def load_settings(path: Path | None = None) -> Settings:
         max_directories=int(limits.get("max_directories", 2000)),
         max_download_size=int(limits.get("max_download_size", 10485760)),
         install_missing_dependencies=bool(dependencies.get("install_missing", False)),
+        workspace_window_limit=int(terminal.get("workspace_window_limit", 4)),
     )

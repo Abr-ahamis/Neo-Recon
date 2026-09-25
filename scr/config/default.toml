@@ -1,5 +1,5 @@
 [scan]
-root = "scr/scans"
+root = "/tmp/neo-recon/scans"
 max_workers = 8
 command_timeout = 900
 retries = 0
@@ -12,4 +12,7 @@ max_directories = 2000
 max_download_size = 10485760
 
 [dependencies]
-install_missing = false
+install_missing = true
+
+[terminal]
+workspace_window_limit = 4

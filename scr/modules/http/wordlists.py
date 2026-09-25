@@ -6,37 +6,27 @@ import os
 from pathlib import Path
 
 
-WEB_CANDIDATES = (
-    "Discovery/Web-Content/common.txt",
-    "Discovery/Web-Content/raft-small-words.txt",
-    "dirb/wordlists/common.txt",
-    "dirbuster/wordlists/directory-list-2.3-small.txt",
-)
-VHOST_CANDIDATES = (
-    "Discovery/DNS/subdomains-top1million-5000.txt",
-    "Discovery/DNS/subdomains-top1million-20000.txt",
-)
-SEARCH_ROOTS = (Path("/usr/share/seclists"), Path("/usr/share/wordlists"),
+DEFAULT_WORDLIST_NAME = "common.txt"
+SEARCH_ROOTS = (Path("/usr/share/wordlists"), Path("/usr/share/seclists"),
                 Path("/usr/share/dirb"), Path("/usr/share/dirbuster"),
                 Path("/opt"), Path("/usr/local/share"))
 
 
 def find_wordlist(kind: str, fallback: Path) -> Path:
-    """Prefer SecLists, then common system lists, and always return a usable path."""
-    relative_candidates = WEB_CANDIDATES if kind == "web" else VHOST_CANDIDATES
+    """Find the shared common.txt list; use the bundled common list as fallback."""
+    del kind  # Path fuzzing and vhost enumeration share the configured common list.
     roots = []
     configured = os.environ.get("SECLISTS_DIR")
     if configured:
         roots.append(Path(configured).expanduser())
     roots.extend(SEARCH_ROOTS)
     for root in roots:
-        for relative in relative_candidates:
-            candidate = root / relative
-            if candidate.is_file() and os.access(candidate, os.R_OK):
-                return candidate
+        candidate = root / DEFAULT_WORDLIST_NAME
+        if candidate.is_file() and os.access(candidate, os.R_OK):
+            return candidate
     # Support nonstandard SecLists installs while limiting the filesystem walk
     # to conventional shared wordlist locations.
-    expected = {Path(value).name.lower() for value in relative_candidates}
+    expected = {DEFAULT_WORDLIST_NAME}
     for root in roots:
         if not root.is_dir():
             continue

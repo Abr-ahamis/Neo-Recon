@@ -11,7 +11,8 @@ from pathlib import Path
 
 _COLLECT_LOCK = threading.Lock()
 _NEEDS_SEPARATOR_NEWLINE = False
-MAX_MAIN_REPORT_LINES = 300
+MAX_MAIN_REPORT_LINES = 250
+MAX_WEB_REPORT_LINES = 200
 
 
 def _write_all(stream_fd: int, data: bytes) -> None:
@@ -23,7 +24,7 @@ def _write_all(stream_fd: int, data: bytes) -> None:
         view = view[written:]
 
 
-def _within_main_report_limit(path: Path) -> bool:
+def _within_main_report_limit(path: Path, limit: int = MAX_MAIN_REPORT_LINES) -> bool:
     lines = 0
     has_data = False
     last_byte = b""
@@ -32,11 +33,11 @@ def _within_main_report_limit(path: Path) -> bool:
             has_data = True
             lines += chunk.count(b"\n")
             last_byte = chunk[-1:]
-            if lines > MAX_MAIN_REPORT_LINES:
+            if lines > limit:
                 return False
     if has_data and last_byte != b"\n":
         lines += 1
-    return lines <= MAX_MAIN_REPORT_LINES
+    return lines <= limit
 
 
 def collect(service: str, argv: list[str], output_path: Path, stream_fd: int = 1,
@@ -54,7 +55,13 @@ def collect(service: str, argv: list[str], output_path: Path, stream_fd: int = 1
             return
         finally:
             client.close()
-    if not _within_main_report_limit(output_path):
+    line_limit = (MAX_WEB_REPORT_LINES if service.lower() in {"http", "https", "web"}
+                  else MAX_MAIN_REPORT_LINES)
+    if not _within_main_report_limit(output_path, line_limit):
+        notice = (f"Output exceeded {line_limit} lines — full output saved to: "
+                  f"{output_path.resolve()}\n").encode()
+        with _COLLECT_LOCK:
+            _write_all(stream_fd, notice)
         return
     header = ("\033[34m" + "-" * 79 + f"\n{service.upper()}\nCOMMAND: {shlex.join(argv)}\n" +
               "-" * 79 + "\033[0m\n").encode()
