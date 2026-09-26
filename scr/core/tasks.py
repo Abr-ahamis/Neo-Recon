@@ -42,6 +42,7 @@ class Task:
     suggested_commands: list[str] = field(default_factory=list)
     collector_socket: str | None = None
     show_command: bool = True
+    new_terminal: bool = False
 
     def __post_init__(self) -> None:
         if not self.id or not self.argv or not self.argv[0]:

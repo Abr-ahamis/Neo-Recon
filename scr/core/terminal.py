@@ -34,7 +34,8 @@ class TerminalManager:
         self.inline_service = os.environ.get("NEO_RECON_SERVICE_WORKER") == "1"
         self.last_external = False
         self.workspaces = workspace_manager or WorkspaceManager(
-            limit=load_settings().workspace_window_limit, env=self.desktop_env)
+            limit=load_settings().workspace_window_limit,
+            preferred_workspaces=load_settings().terminal_workspaces, env=self.desktop_env)
 
     def command(self, title: str, argv: list[str]) -> list[str] | None:
         title = title if title.startswith("Neo-Recon:") else f"Neo-Recon:{title}"
@@ -73,7 +74,8 @@ class TerminalManager:
                 except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
                     original = None
                 workspace = self.workspaces.reserve()
-                if workspace is not None and not self.workspaces.has_capacity(workspace):
+                if (workspace is not None and not self.workspaces.preferred_workspaces
+                        and not self.workspaces.has_capacity(workspace)):
                     self.workspaces.release(workspace)
                     workspace = self.workspaces.reserve()
                     if workspace is not None and not self.workspaces.has_capacity(workspace):
@@ -136,7 +138,7 @@ class TerminalManager:
                 return task.state
             return TaskState.SKIPPED
         try:
-            if self.inline_service:
+            if self.inline_service and not task.new_terminal:
                 task.terminal_external = os.environ.get("NEO_RECON_COLLECT_NATIVE") == "1"
                 with self._inline_lock:
                     return (runner or CommandRunner()).run(task).state
@@ -161,6 +163,7 @@ class TerminalManager:
             "suggested_commands": task.suggested_commands,
             "collector_socket": task.collector_socket,
             "show_command": task.show_command,
+            "new_terminal": task.new_terminal,
         })
         worker = [sys.executable, "-m", "scr.core.worker", str(manifest.resolve())]
         worker_env = os.environ.copy()

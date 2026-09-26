@@ -22,6 +22,7 @@ class Settings:
     max_download_size: int = 10 * 1024 * 1024
     install_missing_dependencies: bool = False
     workspace_window_limit: int = 4
+    terminal_workspaces: tuple[int, ...] = (7, 8, 9)
 
 
 def load_settings(path: Path | None = None) -> Settings:
@@ -51,4 +52,5 @@ def load_settings(path: Path | None = None) -> Settings:
         max_download_size=int(limits.get("max_download_size", 10485760)),
         install_missing_dependencies=bool(dependencies.get("install_missing", False)),
         workspace_window_limit=int(terminal.get("workspace_window_limit", 4)),
+        terminal_workspaces=tuple(int(item) for item in terminal.get("workspaces", (7, 8, 9))),
     )

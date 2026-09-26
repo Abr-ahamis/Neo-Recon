@@ -8,10 +8,17 @@ from scr.core.context import TargetContext
 from scr.core.resources import TraversalLimits
 from scr.core.tasks import TaskState
 from scr.modules.ldap.module import LDAPModule
+from scr.modules.ldap.commands import children
 from scr.modules.ldap.parser import authentication_required, domain_from_dn, entries, naming_contexts
 
 
 class LDAPTests(unittest.TestCase):
+    def test_anonymous_directory_search_has_server_and_client_time_bounds(self) -> None:
+        _, command = children("192.0.2.10", 389, "DC=lab,DC=example")
+        self.assertIn("nettimeout=5", command)
+        self.assertEqual(command[command.index("-l") + 1], "10")
+        self.assertEqual(command[command.index("-z") + 1], "500")
+
     def test_ldif_root_and_continuation_parsing(self) -> None:
         raw = b"defaultNamingContext: DC=lab,DC=example\n\ndn: CN=Alice,DC=lab,DC=example\ncn: Ali\n ce\nobjectClass: user\n"
         self.assertEqual(naming_contexts(raw), ["DC=lab,DC=example"])

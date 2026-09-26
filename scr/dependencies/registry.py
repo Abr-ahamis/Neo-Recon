@@ -20,6 +20,10 @@ EXECUTABLE_PACKAGES = {
     "feroxbuster": {"apt": "feroxbuster", "pacman": "feroxbuster"},
     "nc": {"apt": "netcat-openbsd", "pacman": "openbsd-netcat"},
     "openssl": {"apt": "openssl", "pacman": "openssl"},
+    "impacket-GetNPUsers": {"apt": "impacket-scripts", "pacman": "impacket"},
+    "nmap": {"apt": "nmap", "pacman": "nmap"},
+    "mosquitto_sub": {"apt": "mosquitto-clients", "pacman": "mosquitto"},
+    "timeout": {"apt": "coreutils", "pacman": "coreutils"},
 }
 
 EXECUTABLE_FALLBACKS = {

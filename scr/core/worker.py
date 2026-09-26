@@ -64,6 +64,7 @@ def run(manifest_path: Path) -> int:
                 display_argv=data.get("display_argv"))
     task.collector_socket = data.get("collector_socket")
     task.show_command = data.get("show_command", True)
+    task.new_terminal = data.get("new_terminal", False)
     pidfile.write_text(str(os.getpid()), encoding="ascii")
     result_code = 1
     try:

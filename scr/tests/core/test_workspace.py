@@ -12,6 +12,58 @@ from unittest.mock import patch
 
 
 class WorkspaceManagerTests(unittest.TestCase):
+    def test_preferred_workspaces_are_limited_to_configured_ids(self) -> None:
+        clients: list[dict] = []
+
+        def fake_run(argv, **kwargs):
+            output = json.dumps({"id": 1} if argv[2] == "activeworkspace" else clients)
+            return subprocess.CompletedProcess(argv, 0, stdout=output, stderr="")
+
+        manager = WorkspaceManager(run=fake_run, enabled=True,
+                                   preferred_workspaces=(7, 8, 9), env={})
+        chosen = []
+        for index in range(6):
+            workspace = manager.reserve()
+            chosen.append(workspace)
+            clients.append({"title": f"terminal-{index}", "workspace": {"id": workspace}})
+            manager.release(workspace)
+        self.assertEqual(chosen, [7, 8, 9, 7, 8, 9])
+
+    def test_sway_tree_normalizes_visible_terminal_nodes(self) -> None:
+        tree = {"type": "root", "nodes": [{"type": "workspace", "num": 8,
+                "nodes": [{"type": "con", "id": 321, "name": "Neo-Recon:ffuf",
+                           "nodes": [], "floating_nodes": []}]}]}
+        clients = WorkspaceManager._sway_clients(tree)
+        self.assertEqual(clients[0]["title"], "Neo-Recon:ffuf")
+        self.assertEqual(clients[0]["workspace"]["id"], 8)
+        self.assertEqual(clients[0]["con_id"], 321)
+
+    def test_sway_backend_uses_swaymsg_ipc(self) -> None:
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(argv)
+            if argv[1:3] == ["-t", "get_workspaces"]:
+                output = json.dumps([{"num": 8, "focused": True}])
+            else:
+                output = "{}"
+            return subprocess.CompletedProcess(argv, 0, stdout=output, stderr="")
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "sway.conf"
+            config.write_text('set $ws7 "7: "\nset $ws8 "8: "\nset $ws9 "9: "\n')
+            with patch("scr.core.workspace.shutil.which", return_value="/usr/bin/swaymsg"):
+                manager = WorkspaceManager(run=fake_run, enabled=True,
+                                           preferred_workspaces=(7, 8, 9),
+                                           env={"SWAYSOCK": "/tmp/sway-ipc.sock",
+                                                "SWAY_CONFIG": str(config)})
+            self.assertEqual(manager.active_workspace(), 8)
+            self.assertTrue(manager.switch_to(9))
+            self.assertTrue(manager.place("terminal", "321", 9))
+        self.assertEqual(calls[0][0], "swaymsg")
+        self.assertEqual(calls[1], ["swaymsg", 'workspace "9: "'])
+        self.assertEqual(calls[2], ["swaymsg", '[con_id=321] move container to workspace "9: "'])
+
     def test_terminal_adapter_prefers_foot(self) -> None:
         with patch("scr.core.terminal.desktop_session_env",
                    return_value={"DISPLAY": ":1"}), \
@@ -49,7 +101,7 @@ class WorkspaceManagerTests(unittest.TestCase):
                 output = json.dumps(clients)
             return subprocess.CompletedProcess(argv, 0, stdout=output, stderr="")
 
-        manager = WorkspaceManager(run=fake_run, enabled=True)
+        manager = WorkspaceManager(run=fake_run, enabled=True, env={})
         placed: list[int] = []
         for index in range(15):
             workspace = manager.reserve()
@@ -71,7 +123,7 @@ class WorkspaceManagerTests(unittest.TestCase):
 
         selected = []
         for index in range(6):
-            manager = WorkspaceManager(run=fake_run, enabled=True)
+            manager = WorkspaceManager(run=fake_run, enabled=True, env={})
             workspace = manager.reserve()
             selected.append(workspace)
             clients.append({"title": f"Neo-Recon:parallel-{index}",
@@ -87,7 +139,7 @@ class WorkspaceManagerTests(unittest.TestCase):
             output = json.dumps({"id": 1} if argv[2] == "activeworkspace" else clients)
             return subprocess.CompletedProcess(argv, 0, stdout=output, stderr="")
 
-        manager = WorkspaceManager(run=fake_run, enabled=True)
+        manager = WorkspaceManager(run=fake_run, enabled=True, env={})
         workspaces = []
         for index in range(3):
             workspace = manager.reserve()
@@ -107,7 +159,7 @@ class WorkspaceManagerTests(unittest.TestCase):
             output = json.dumps({"id": 1} if argv[2] == "activeworkspace" else clients)
             return subprocess.CompletedProcess(argv, 0, stdout=output, stderr="")
 
-        manager = WorkspaceManager(run=fake_run, enabled=True)
+        manager = WorkspaceManager(run=fake_run, enabled=True, env={})
         workspace = manager.reserve()
         self.assertEqual(workspace, 2)
         manager.release(workspace)

@@ -17,7 +17,7 @@ SERVICE_MODULES = {
     "mysql": "mysql", "postgresql": "postgresql", "postgres": "postgresql",
     "nfs": "nfs", "rpcbind": "nfs", "snmp": "snmp", "redis": "redis",
     "docker": "docker", "http-json": "http", "microsoft-httpapi": "http",
-    "ncacn_http": "rpc", "mc-nmf": "adws", "wsman": "winrm",
+    "ncacn_http": "rpc", "mc-nmf": "adws", "wsman": "winrm", "mqtt": "mqtt",
 }
 
 PRODUCT_PATTERNS = (
@@ -43,7 +43,7 @@ KNOWN_UNIMPLEMENTED = {
     "x11", "xdmcp", "spice", "teamcity", "bamboo", "argocd", "sonarqube", "grafana",
     "prometheus", "kibana", "splunk", "graylog", "nagios", "zabbix", "webmin", "cockpit",
 }
-IMPLEMENTED_MODULES = {"http", "https", "smb", "ftp", "ssh", "ldap", "dns"}
+IMPLEMENTED_MODULES = {"http", "https", "smb", "ftp", "ssh", "ldap", "dns", "kerberos", "mqtt"}
 KNOWN_UNIMPLEMENTED.update({"rpc", "adws", "winrm", "kerberos"})
 
 

@@ -56,7 +56,9 @@ def run(path: Path) -> int:
     except Exception as exc:
         state = "FAILED"
         result = {"error": str(exc)}
-    suggestions = service_suggestions(data["service"], context, int(data["port"]))
+    # HTTP prints its five fuzzing follow-ups after its automatic ffuf jobs.
+    suggestions = ([] if data["service"] in {"http", "https"} else
+                   service_suggestions(data["service"], context, int(data["port"])))
     if suggestions:
         os.write(1, b"\nSuggested commands (copy and run):\n")
         for command in suggestions:

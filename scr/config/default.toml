@@ -16,3 +16,4 @@ install_missing = true
 
 [terminal]
 workspace_window_limit = 4
+workspaces = [7, 8, 9]

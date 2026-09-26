@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import shlex
 import shutil
 from pathlib import Path
 from collections.abc import Callable
@@ -46,9 +47,12 @@ class HTTPModule:
     @staticmethod
     def _ensure_ffuf() -> bool:
         if not shutil.which("ffuf"):
-            DependencyManager(
+            result = DependencyManager(
                 install_missing=load_settings().install_missing_dependencies
             ).ensure(("ffuf",))
+            if result.missing:
+                print("[HTTP] ffuf is missing. Install with: sudo apt-get install -y ffuf "
+                      "(or: sudo pacman -S --needed ffuf)")
         return shutil.which("ffuf") is not None
 
     def _task(self, url: str, label: str, headers: tuple[str, ...] = (),
@@ -129,29 +133,57 @@ class HTTPModule:
                 or len(self._fuzzed) >= 8):
             return []
         self._fuzzed.add(resource.resource_id)
-        source = find_wordlist("web", rules.WORDLIST)
-        if not source.is_file():
+        source = find_wordlist("web", Path(__file__).resolve().parents[2] / "wordlists/common.txt")
+        if source is None or not source.is_file():
+            print("[HTTP] No web wordlist found. Install SecLists or place a list under "
+                  "scr/wordlists, then run: ffuf -u <BASE_URL>/FUZZ -w <WORDLIST> -mc all")
             return []
         key = hashlib.sha256(resource.path.encode()).hexdigest()[:12]
         scan = self.context.scan_dir
         wordlist = scan / "metadata" / "http-wordlists" / f"web-{key}.txt"
         json_output = scan / "metadata" / f"http-ffuf-{key}.json"
-        if bounded_copy(source, wordlist, limit=250) == 0:
+        if bounded_copy(source, wordlist) == 0:
             return []
         url = resource.path if resource.path.endswith("/") else resource.path + "/"
-        argv, display = commands.fuzz(url.rstrip("/") + "/FUZZ", wordlist, json_output)
+        baseline_size = len(self.baseline.body) if self.baseline else None
+        argv, display = commands.fuzz(url.rstrip("/") + "/FUZZ", wordlist, json_output,
+                                      filter_size=baseline_size)
         output = scan / "services/http" / f"ffuf-{key}.raw"
         metadata = scan / "metadata" / f"http-ffuf-{key}-command.json"
         task = Task(f"http-ffuf-{key}", self.context.target, "http", argv, output,
                     metadata, timeout=60, reason=f"HTTP wordlist discovery under {url}",
-                    display_argv=display, resource_id=url)
+                    display_argv=display, resource_id=url, new_terminal=True)
         state = self.terminals.execute(task, self.runner)
         if task.terminal_external and output.exists():
             collect("HTTP", display, output)
         if state not in {TaskState.SUCCESS, TaskState.FAILED}:
             return []
+        result_sets = [commands.parse_fuzz_results(json_output)]
+        file_source = find_wordlist("web-files", None)
+        if file_source:
+            file_wordlist = scan / "metadata" / "http-wordlists" / f"files-{key}.txt"
+            if bounded_copy(file_source, file_wordlist):
+                file_json = scan / "metadata" / f"http-ffuf-files-{key}.json"
+                file_argv, file_display = commands.fuzz(
+                    url.rstrip("/") + "/FUZZ", file_wordlist, file_json,
+                    filter_size=baseline_size,
+                    extensions=(".asp", ".aspx", ".html", ".txt", ".bak", ".zip", ".config", ".old"))
+                file_output = scan / "services/http" / f"ffuf-files-{key}.raw"
+                file_task = Task(f"http-ffuf-files-{key}", self.context.target, "http",
+                                 file_argv, file_output,
+                                 scan / "metadata" / f"http-ffuf-files-{key}-command.json",
+                                 timeout=120, reason=f"HTTP file discovery under {url}",
+                                 display_argv=file_display, resource_id=url, new_terminal=True)
+                file_state = self.terminals.execute(file_task, self.runner)
+                if file_task.terminal_external and file_output.exists():
+                    collect("HTTP", file_display, file_output)
+                if file_state in {TaskState.SUCCESS, TaskState.FAILED}:
+                    result_sets.append(commands.parse_fuzz_results(file_json))
+        else:
+            print("[HTTP] No file wordlist found; directory fuzzing still ran. "
+                  "Use SecLists Discovery/Web-Content/raft-medium-files.txt when available.")
         children = []
-        for result in commands.parse_fuzz_results(json_output):
+        for result in (item for group in result_sets for item in group):
             candidate = result.get("input", {})
             word = candidate.get("FUZZ") if isinstance(candidate, dict) else None
             status = result.get("status")
@@ -217,14 +249,21 @@ class HTTPModule:
         domain = self.context.facts.get("domain") or next(iter(sorted(self.context.domains)), None)
         if domain and self.execute_task is None:
             self._enumerate_vhosts(str(domain))
+        if self.execute_task is None:
+            self._print_manual_commands(str(domain) if domain else None)
         return values
 
     def _enumerate_vhosts(self, domain: str) -> None:
-        fallback = Path(__file__).resolve().parents[2] / "wordlists/common.txt"
+        fallback = Path(__file__).resolve().parents[2] / "wordlists/web/vhosts.txt"
         source = find_wordlist("vhost", fallback)
+        if source is None:
+            command = (f"ffuf -u {self.base_url} -H 'Host: FUZZ.{domain}' "
+                       "-w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt -mc all")
+            print(f"[HTTP] No vhost wordlist found. Run manually: {command}")
+            return
         wordlist = self.context.scan_dir / "metadata/http-vhosts-active.txt"
         try:
-            bounded_copy(source, wordlist, limit=30)
+            bounded_copy(source, wordlist)
             candidates = [line.strip() for line in wordlist.read_text(encoding="utf-8").splitlines()
                           if line.strip()]
         except OSError:
@@ -234,13 +273,14 @@ class HTTPModule:
             key = hashlib.sha256((self.base_url + domain).encode()).hexdigest()[:12]
             json_output = self.context.scan_dir / "metadata" / f"http-vhosts-{key}.json"
             argv, display = commands.fuzz(self.base_url, wordlist, json_output,
-                                           headers=(f"Host: FUZZ.{domain}",))
+                                           headers=(f"Host: FUZZ.{domain}",),
+                                           filter_size=len(self.baseline.body) if self.baseline else None)
             output = self.context.scan_dir / "services/http" / f"ffuf-vhosts-{key}.raw"
             metadata = self.context.scan_dir / "metadata" / f"http-vhosts-{key}-command.json"
             task = Task(f"http-vhosts-{key}", self.context.target, "http", argv,
                         output, metadata, timeout=60,
                         reason=f"HTTP virtual-host discovery for {domain}",
-                        display_argv=display, resource_id=self.base_url)
+                        display_argv=display, resource_id=self.base_url, new_terminal=True)
             state = self.terminals.execute(task, self.runner)
             if task.terminal_external and output.exists():
                 collect("HTTP", display, output)
@@ -257,3 +297,27 @@ class HTTPModule:
             self.context.add_hostname(hostname)
             findings.append({"hostname": hostname, "source": "ffuf"})
         write_json(self.context.scan_dir / "metadata/http-vhosts.json", findings)
+
+    def _print_manual_commands(self, domain: str | None) -> None:
+        """Print five useful, copy-ready follow-up commands after automated fuzzing."""
+        root = Path(__file__).resolve().parents[2]
+        directories = find_wordlist("web", root / "wordlists/common.txt")
+        files = find_wordlist("web-files", root / "wordlists/common.txt")
+        vhosts = find_wordlist("vhost", root / "wordlists/web/vhosts.txt")
+        directory_list = shlex.quote(str(directories)) if directories else "<DIRECTORY_WORDLIST>"
+        file_list = shlex.quote(str(files)) if files else "<FILE_WORDLIST>"
+        vhost_list = shlex.quote(str(vhosts)) if vhosts else "<VHOST_WORDLIST>"
+        base = self.base_url.rstrip("/")
+        baseline_filter = f" -fs {len(self.baseline.body)}" if self.baseline else ""
+        commands_to_run = [
+            f"ffuf -u {base}/FUZZ -w {directory_list}{baseline_filter} -ac -t 40 -of json -o ffuf-directories.json",
+            f"ffuf -u {base}/FUZZ -w {file_list} -e .asp,.aspx,.html,.txt,.bak,.zip,.config,.old{baseline_filter} -ac -t 40 -of json -o ffuf-files.json",
+            (f"ffuf -u {base}/ -H 'Host: FUZZ.{domain or '<DOMAIN>'}' -w {vhost_list} "
+             f"{baseline_filter.strip()} -ac -t 40 -of json -o ffuf-vhosts.json"),
+            f"gobuster dir -u {base}/ -w {directory_list} -x asp,aspx,html,txt,bak,zip,config,old -s 200,204,301,302,307,401,403 -t 40 -o gobuster-directories.txt",
+            f"feroxbuster --url {base}/ --wordlist {directory_list} --extensions asp,aspx,html,txt,bak,zip,config,old --status-codes 200 204 301 302 307 401 403 --threads 20 --output feroxbuster-results.txt",
+        ]
+        print("\n[HTTP] Automated vhost, directory, and file enumeration finished.")
+        print("Suggested commands (copy and run):")
+        for index, command in enumerate(commands_to_run, start=1):
+            print(f"{index}. {command}")

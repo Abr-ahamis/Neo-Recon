@@ -41,10 +41,15 @@ def command_string(argv: list[str]) -> str:
 
 def fuzz(url_template: str, wordlist: Path, json_output: Path, *,
          timeout: int = 45, threads: int = 20,
-         headers: tuple[str, ...] = ()) -> tuple[list[str], list[str]]:
-    display = ["ffuf", "-v", "-noninteractive", "-u", url_template,
+         headers: tuple[str, ...] = (), filter_size: int | None = None,
+         extensions: tuple[str, ...] = ()) -> tuple[list[str], list[str]]:
+    display = ["ffuf", "-noninteractive", "-u", url_template,
                "-w", str(wordlist), "-maxtime", str(timeout),
                "-t", str(threads), "-of", "json", "-o", str(json_output)]
+    if filter_size is not None:
+        display.extend(("-fs", str(filter_size)))
+    if extensions:
+        display.extend(("-e", ",".join(extensions)))
     for header in headers:
         display.extend(("-H", header))
     return ["bash", str(Path(__file__).with_name("run.sh")), *display], display

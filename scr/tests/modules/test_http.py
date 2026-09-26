@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import shutil
+import io
 import unittest
 import json
 import os
@@ -11,6 +12,7 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 from unittest.mock import patch
+from contextlib import redirect_stdout
 
 from scr.core.context import TargetContext
 from scr.core.resources import TraversalLimits
@@ -26,6 +28,35 @@ from scr.core.suggestions import service_suggestions
 
 
 class HTTPParserTests(unittest.TestCase):
+    def test_manual_followups_print_five_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            module = HTTPModule(TargetContext("192.0.2.10", Path(directory)), port=8080)
+            module.baseline = parse_response(b"HTTP/1.1 200 OK\r\n\r\npage")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                module._print_manual_commands("lab.example")
+            lines = output.getvalue().splitlines()
+            commands = [line for line in lines if line[:1].isdigit() and line[1:3] == ". "]
+            self.assertEqual(len(commands), 5)
+            self.assertIn("Host: FUZZ.lab.example", "\n".join(commands))
+            self.assertIn("-fs 4", "\n".join(commands))
+
+    def test_wordlist_finder_prefers_seclists_then_uses_local_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            lists = root / "seclists"
+            preferred = lists / "Discovery/Web-Content/raft-medium-directories.txt"
+            preferred.parent.mkdir(parents=True)
+            preferred.write_text("admin\n")
+            local = root / "project/wordlists/common.txt"
+            local.parent.mkdir(parents=True)
+            local.write_text("login\n")
+            with patch("scr.modules.http.wordlists.SEARCH_ROOTS", (lists,)):
+                self.assertEqual(find_wordlist("web", local), preferred)
+                preferred.unlink()
+                self.assertEqual(find_wordlist("web", local), local)
+                self.assertIsNone(find_wordlist("web-files"))
+
     def test_wordlist_search_prefers_seclists_and_bounds_scan_copy(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -57,8 +88,13 @@ class HTTPParserTests(unittest.TestCase):
             argv, display = fuzz("http://example.test/FUZZ", wordlist, result_file)
             self.assertEqual(display[0], "ffuf")
             self.assertIn(str(wordlist), display)
+            self.assertNotIn("-v", display)
+            self.assertNotIn("all", display)
             self.assertNotIn("-ac", display)
             self.assertIn("-of", display)
+            _, filtered = fuzz("http://example.test/FUZZ", wordlist, result_file,
+                               filter_size=682)
+            self.assertEqual(filtered[filtered.index("-fs") + 1], "682")
             result_file.write_text('{"results":[{"input":{"FUZZ":"admin/"},"status":200}]}')
             self.assertEqual(parse_fuzz_results(result_file)[0]["status"], 200)
 

@@ -39,11 +39,36 @@ def _module_for(name: str, context: TargetContext, port: int, transport: str,
         from scr.modules.ssh.module import SSHModule
         return SSHModule(context, port=port)
     if name == "ldap":
+        ldap_services = [item for item in context.services
+                         if item.get("module") == "ldap"]
+        secure = lambda item: (item.get("transport") == "tcp_tls" or
+                               int(item.get("port", 0)) in {636, 3269} or
+                               str(item.get("service", "")).lower() in {"ldaps", "ssl/ldap"})
+        plain_ports = sorted({int(item["port"]) for item in ldap_services
+                              if not secure(item)},
+                             key=lambda item: (item not in {389, 3268},
+                                               {389: 0, 3268: 1}.get(item, 2), item))
+        secure_ports = sorted({int(item["port"]) for item in ldap_services
+                               if secure(item)},
+                              key=lambda item: ({636: 0, 3269: 1}.get(item, 2), item))
+        selected_port = (plain_ports[0] if plain_ports else
+                         secure_ports[0] if secure_ports else port)
+        if port != selected_port:
+            return None
         from scr.modules.ldap.module import LDAPModule
-        return LDAPModule(context, port=port, tls=transport == "tcp_tls", limits=limits)
+        return LDAPModule(context, port=port,
+                          tls=transport == "tcp_tls" or port in {636, 3269}, limits=limits)
     if name == "dns":
         from scr.modules.dns.module import DNSModule
         return DNSModule(context, port=port)
+    if name == "kerberos":
+        if port != 88:
+            return None
+        from scr.modules.kerberos.module import KerberosModule
+        return KerberosModule(context, port=port)
+    if name == "mqtt":
+        from scr.modules.mqtt.module import MQTTModule
+        return MQTTModule(context, port=port)
     return None
 
 

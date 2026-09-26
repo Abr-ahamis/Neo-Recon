@@ -82,6 +82,15 @@ class DNSModule:
             for kind in ("SOA", "NS", "A", "AAAA", "MX", "TXT", "SRV"):
                 found.extend(self._query(domain, kind, tcp=False))
                 self._query(domain, kind, tcp=True)
+            # AD records and zone transfer are direct, read-only DNS queries.
+            for name in ("_ldap._tcp.dc._msdcs." + domain,
+                         "_ldap._tcp." + domain,
+                         "_kerberos._tcp." + domain,
+                         "_kerberos._udp." + domain,
+                         "_gc._tcp." + domain,
+                         "_kpasswd._udp." + domain):
+                found.extend(self._query(name, "SRV", tcp=False))
+            found.extend(self._query(domain, "AXFR", tcp=True))
         pending = rules.followup_queries(found)
         while pending and len(self.queries) < 200:
             name, kind = pending.pop(0)

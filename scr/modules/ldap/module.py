@@ -36,7 +36,7 @@ class LDAPModule:
         task = Task(f"ldap-{label}-{key}", self.context.target, "ldap", actual,
                     self.context.scan_dir / "services/ldap" / f"{label}-{key}.raw",
                     self.context.scan_dir / "metadata" / f"ldap-{label}-{key}.json",
-                    timeout=60, reason=f"LDAP {label}", display_argv=display,
+                    timeout=20, reason=f"LDAP {label}", display_argv=display,
                     resource_id=resource_id or None)
         state = self.execute_task(task) if self.execute_task else self.terminals.execute(task, self.runner)
         if not self.execute_task and task.terminal_external and task.output_path.exists():

@@ -35,4 +35,9 @@ def desktop_session_env(base: dict[str, str] | None = None,
         if sessions:
             sessions.sort(key=lambda path: path.stat().st_mtime, reverse=True)
             env["HYPRLAND_INSTANCE_SIGNATURE"] = sessions[0].name
+    if not env.get("SWAYSOCK"):
+        sway_sockets = sorted(runtime.glob("sway-ipc.*.sock"),
+                              key=lambda path: path.stat().st_mtime, reverse=True)
+        if sway_sockets:
+            env["SWAYSOCK"] = str(sway_sockets[0])
     return env
